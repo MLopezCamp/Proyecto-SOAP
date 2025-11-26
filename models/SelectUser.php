@@ -1,13 +1,13 @@
 <?php
-//Configuración del servidor SOAP
+require_once "../vendor/autoload.php";
 require_once "../vendor/econea/nusoap/src/nusoap.php";
 require_once "../config/Database.php";
+require_once "../models/middleware/TokenValidator.php";
 
 $namespace = "SelectUserSOAP";
 $server = new soap_server();
 $server->configureWSDL('SoapService', $namespace);
 
-// Registrar método
 $server->register(
     'SelectUserService',
     array('user_id' => 'xsd:int'),
@@ -19,10 +19,19 @@ $server->register(
     'Obtener un usuario por ID'
 );
 
-// Función para consultar un usuario
 function SelectUserService($user_id) {
-    global $pdo;
 
+    // 1. Leer token
+    $token = TokenValidator::extractToken();
+    $valid = TokenValidator::validate($token);
+
+    if (!$valid['ok']) {
+        return "<error>{$valid['mensaje']}</error>";
+    }
+
+    // 2. Conexión BD
+    $db = new Database();
+    $pdo = $db->getConnection();
     if (!$pdo) return "Conexión a BD no disponible";
 
     try {
@@ -32,13 +41,12 @@ function SelectUserService($user_id) {
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return $user ? json_encode($user) : "Usuario no encontrado";
+
     } catch (PDOException $e) {
         return "Error: " . $e->getMessage();
     }
 }
 
-// Procesamiento SOAP
 $POST_DATA = file_get_contents("php://input");
 $server->service($POST_DATA);
 exit();
-?>

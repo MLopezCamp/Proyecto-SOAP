@@ -1,13 +1,19 @@
 <?php
-// Configuración del servidor SOAP
+require_once "../vendor/autoload.php";
 require_once "../vendor/econea/nusoap/src/nusoap.php";
 require_once "../config/Database.php";
+require_once "../models/middleware/TokenValidator.php";
+require_once "../models/middleware/RoleMiddleware.php";
 
 $namespace = "UpdateUserSOAP";
 $server = new soap_server();
 $server->configureWSDL('SoapService', $namespace);
 
-// Definición de parámetros
+/*
+|---------------------------------------------------------
+| DEFINICIÓN DEL TIPO COMPLEJO UpdateUser
+|---------------------------------------------------------
+*/
 $server->wsdl->addComplexType(
     'UpdateUser',
     'complexType',
@@ -26,25 +32,63 @@ $server->wsdl->addComplexType(
     )
 );
 
-// Registrar método
+/*
+|---------------------------------------------------------
+| REGISTRO DEL MÉTODO SOAP
+|---------------------------------------------------------
+*/
 $server->register(
     'UpdateUserService',
     array('data' => 'tns:UpdateUser'),
     array('return' => 'xsd:string'),
-    $namespace,
-    false,
-    'rpc',
-    'encoded',
-    'Actualizar un usuario'
+    $namespace
 );
 
-// Función de actualización
-function UpdateUserService($data) {
+/*
+|---------------------------------------------------------
+| IMPLEMENTACIÓN DEL SERVICIO
+|---------------------------------------------------------
+*/
+function UpdateUserService($data)
+{
+    // 1) Obtener token del header SOAP
+    $headers = apache_request_headers();
+    $token = $headers['Authorization'] ?? "";
+
+    if (!$token) {
+        return "ERROR: Token no proporcionado";
+    }
+
+    // 2) Validar token
+    $valid = TokenValidator::validate($token);
+    if (!$valid['ok']) {
+        return "ERROR: " . $valid['mensaje'];
+    }
+
+    $roleId = $valid['role'];
+    $userIdToken = $valid['id'];
+
+    // 3) Validar rol contra tb_routes + rutas_roles
+    $rutaActual = "/soap/UpdateUser";
+    $metodo = "POST";
+
+    $roleCheck = RoleMiddleware::validateAccess($roleId, $rutaActual, $metodo);
+
+    if (!$roleCheck['ok']) {
+        return "ERROR: " . $roleCheck['mensaje'];
+    }
+
+    // 4) Conexión a BD (como tú la tenías)
     global $pdo;
     if (!$pdo) return "Error: Conexión a BD no disponible";
 
+    if (!$pdo) {
+        return "ERROR: Conexión a la BD no disponible";
+    }
+
+    // 5) Actualizar usuario
     try {
-        $stmt = $pdo->prepare("UPDATE users 
+        $stmt = $pdo->prepare("UPDATE users
                                SET user_name = :user_name,
                                    lastname = :lastname,
                                    doc_type_id = :doc_type_id,
@@ -54,25 +98,26 @@ function UpdateUserService($data) {
                                    phone = :phone
                                WHERE user_id = :user_id");
 
-        $stmt->bindParam(':user_id', $data['user_id']);
-        $stmt->bindParam(':user_name', $data['user_name']);
-        $stmt->bindParam(':lastname', $data['lastname']);
-        $stmt->bindParam(':doc_type_id', $data['doc_type_id']);
-        $stmt->bindParam(':usu_correo', $data['usu_correo']);
-        $stmt->bindParam(':num_doc', $data['num_doc']);
-        $stmt->bindParam(':address', $data['address']);
-        $stmt->bindParam(':phone', $data['phone']);
+        $stmt->execute([
+            ':user_id'     => $data['user_id'],
+            ':user_name'   => $data['user_name'],
+            ':lastname'    => $data['lastname'],
+            ':doc_type_id' => $data['doc_type_id'],
+            ':usu_correo'  => $data['usu_correo'],
+            ':num_doc'     => $data['num_doc'],
+            ':address'     => $data['address'],
+            ':phone'       => $data['phone'],
+        ]);
 
-        $stmt->execute();
+        return $stmt->rowCount() > 0 ? 
+            "Usuario actualizado correctamente" : 
+            "No se encontró el usuario";
 
-        return $stmt->rowCount() > 0 ? "Usuario actualizado correctamente" : "No se encontró el usuario";
     } catch (PDOException $e) {
-        return "Error: " . $e->getMessage();
+        return "ERROR: " . $e->getMessage();
     }
 }
 
-// Procesamiento SOAP
-$POST_DATA = file_get_contents("php://input");
-$server->service($POST_DATA);
-exit();
+$server->service(file_get_contents("php://input"));
+exit;
 ?>

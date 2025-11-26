@@ -1,7 +1,8 @@
 <?php
-// Configuración del servidor SOAP
+require_once "../vendor/autoload.php";
 require_once "../vendor/econea/nusoap/src/nusoap.php";
 require_once "../config/Database.php";
+require_once "../models/middleware/TokenValidator.php";
 
 $namespace = "DeleteUserSOAP";
 $server = new soap_server();
@@ -19,24 +20,36 @@ $server->register(
     'Eliminar un usuario por ID'
 );
 
-// Función de eliminación
 function DeleteUserService($user_id) {
-    global $pdo;
-    if (!$pdo) return "Conexión a BD no disponible";
+
+    // 1. Leer token
+    $token = TokenValidator::extractToken();
+    $valid = TokenValidator::validate($token);
+
+    if (!$valid['ok']) {
+        return "<error>{$valid['mensaje']}</error>";
+    }
+
+    // 2. Conexión BD
+    $db = new Database();
+    $pdo = $db->getConnection();
+    if (!$pdo) return "Error: Conexión a BD no disponible";
+    
 
     try {
         $stmt = $pdo->prepare("DELETE FROM users WHERE user_id = :user_id");
         $stmt->bindParam(':user_id', $user_id, PDO::PARAM_INT);
         $stmt->execute();
 
-        return $stmt->rowCount() > 0 ? "Usuario eliminado correctamente" : "Usuario no encontrado";
+        return $stmt->rowCount() > 0
+            ? "Usuario eliminado correctamente"
+            : "Usuario no encontrado";
+
     } catch (PDOException $e) {
         return "Error: " . $e->getMessage();
     }
 }
 
-// Procesamiento SOAP
 $POST_DATA = file_get_contents("php://input");
 $server->service($POST_DATA);
 exit();
-?>
